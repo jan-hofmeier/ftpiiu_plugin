@@ -45,6 +45,7 @@ misrepresented as being the original software.
 
 #define FTP_BUFFER_SIZE 1024
 #define MAX_CLIENTS     5
+#define COPY_BUFFER_SIZE (1024 * 1024)
 
 static const uint16_t SRC_PORT    = 20;
 static const int32_t EQUIT        = 696969;
@@ -66,6 +67,7 @@ struct client_struct {
     int32_t data_socket;
     char cwd[MAXPATHLEN];
     char pending_rename[MAXPATHLEN];
+    char pending_copy[MAXPATHLEN];
     off_t restart_marker;
     struct sockaddr_in address;
     bool authenticated;
@@ -309,6 +311,53 @@ static int32_t ftp_RNTO(client_t *client, char *path) {
                                                   errno));
     }
     *client->pending_rename = '\0';
+    return result;
+}
+
+static int32_t ftp_CPFR(client_t *client, char *path) {
+    strcpy(client->pending_copy, path);
+    return write_reply(client, 350, "Ready for CPTO.");
+}
+
+
+static bool copy_loop(FILE *rf, FILE *wf, char* buf, uint32_t bs){
+    int32_t bytes_read, bytes_written;
+    while((bytes_read = fread(buf, 1, bs, rf)) > 0){
+        bytes_written = fwrite(buf, 1, bytes_read, wf);
+        if (bytes_written < bytes_read) {
+            return false;
+        }
+    }
+    return feof(rf);
+}
+
+static int32_t ftp_CPTO(client_t *client, char *path) {
+    if (!*client->pending_copy) {
+        return write_reply(client, 503, "CPFR required first.");
+    }
+
+    int32_t result = -1;
+
+    char *buf = (char *) memalign(0x40, COPY_BUFFER_SIZE);
+    if (buf) {
+        FILE *rf = vrt_fopen(client->cwd, client->pending_copy, "rb");
+        if (rf) {
+            FILE *wf = vrt_fopen(client->cwd, path, "wb");
+            if (wf) {
+                result = !copy_loop(rf, wf, buf, COPY_BUFFER_SIZE);
+                fclose(wf);
+            }
+            fclose(rf);
+        }
+        if (!result) {
+            result = write_reply(client, 250, "copy successful.");
+        } else {
+            result = write_reply(client, 550, strerror(errno));
+        }
+        free(buf);       
+    }
+
+    *client->pending_copy = '\0';
     return result;
 }
 
@@ -724,14 +773,14 @@ static const char *authenticated_commands[] = {
         "SIZE", "PASV", "PORT", "TYPE", "SYST", "MODE",
         "RETR", "STOR", "APPE", "REST", "DELE", "MKD",
         "RMD", "RNFR", "RNTO", "NLST", "QUIT", "REIN",
-        "SITE", "FEAT", "OPTS", "NOOP", "ALLO", NULL};
+        "SITE", "FEAT", "OPTS", "NOOP", "ALLO", "CPFR", "CPTO", NULL};
 static const ftp_command_handler authenticated_handlers[] = {
         ftp_USER, ftp_PASS, ftp_LIST, ftp_PWD, ftp_CWD, ftp_CDUP,
         ftp_SIZE, ftp_PASV, ftp_PORT, ftp_TYPE, ftp_SYST, ftp_MODE,
         ftp_RETR, ftp_STOR, ftp_APPE, ftp_REST, ftp_DELE, ftp_MKD,
         ftp_DELE, ftp_RNFR, ftp_RNTO, ftp_NLST, ftp_QUIT, ftp_REIN,
         ftp_SITE, ftp_FEAT, ftp_OPTS, ftp_NOOP, ftp_SUPERFLUOUS,
-        ftp_UNKNOWN};
+        ftp_CPFR, ftp_CPTO, ftp_UNKNOWN};
 
 /*
 	returns negative to signal an error that requires closing the connection
@@ -827,6 +876,7 @@ static bool process_accept_events(int32_t server) {
         client->data_socket         = -1;
         strcpy(client->cwd, "/");
         *client->pending_rename              = '\0';
+        *client->pending_copy                = '\0';
         client->restart_marker               = 0;
         client->authenticated                = false;
         client->offset                       = 0;
