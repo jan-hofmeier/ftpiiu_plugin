@@ -861,40 +861,13 @@ bool FtpSession::changeDir (char const *const args_)
 		return false;
 
 	// Check permissions for the target directory
-	// Although CWD is not "reading file content", it's accessing a path.
-	if (!checkPathPermission(path, false)) {
-		// checkPathPermission sends the response, but changeDir needs to return false
-		// and CWD/CDUP will then send their own 550.
-		// To avoid double messages, maybe checkPathPermission should not send for CWD?
-		// For now, let CWD send its own 550 if this path is resolved but fails tzStat or S_ISDIR.
-		// If checkPathPermission fails, it sends a 550. We should rely on that.
-		// CWD itself sends 550 if tzStat fails or not a dir.
-		// To prevent CWD from sending another 550 if checkPathPermission sent one,
-		// we need a way for CWD to know.
-		// Alternative: checkPathPermission could return a specific error code or rely on errno.
-		// For now, let's assume if checkPathPermission fails, it sends the response,
-		// and we should prevent further error messages from CWD.
-		// However, CWD sends 550 + strerror(errno). checkPathPermission sends its own message.
-		// This is tricky. Let's make checkPathPermission NOT send a response for CWD,
-		// or make a variant.
-		// Simpler for now: if checkPathPermission fails, it sends a response.
-		// The calling CWD will then try to stat and might send another.
-		// This is not ideal.
-		// Let's assume checkPathPermission sends the response and we return false.
-		// The calling CWD handler will then see false and *also* send a 550.
-		// This means checkPathPermission needs to be the single source of truth for path errors.
-		//
-		// Decision: checkPathPermission *will* send the response.
-		// The subsequent checks in changeDir (tzStat, S_ISDIR) will only proceed if permission is granted.
-		// If they fail, they set errno, and CWD will use that.
-		// This seems like the most straightforward way to integrate.
-		errno = 0; // Clear errno before permission check
-		// Call checkPathPermission with send_response_on_failure = false
-		if (!checkPathPermission(path, false, false)) {
-			// errno should be set by checkPathPermission if permission is denied
-			if (errno == 0) errno = EACCES; // Fallback errno if not set by checkPathPermission
-			return false;
-		}
+	// Call checkPathPermission with send_response_on_failure = false
+	// so CWD/CDUP can use strerror(errno) for their 550 message.
+	errno = 0; // Clear errno before permission check
+	if (!checkPathPermission(path, false, false)) {
+		// errno should be set by checkPathPermission if permission is denied
+		if (errno == 0) errno = EACCES; // Fallback errno if not set by checkPathPermission
+		return false;
 	}
 
 	stat_t st;
@@ -1349,7 +1322,7 @@ void FtpSession::xferFile (char const *const args_, XferFileMode const mode_)
 
 	// Check permissions before proceeding
 	bool isWrite = (mode_ != XferFileMode::RETR);
-	if (!checkPathPermission(path, isWrite)) {
+	if (!checkPathPermission(path, isWrite, true)) { // send_response_on_failure = true
 		// checkPathPermission sends the response
 		setState (State::COMMAND, true, true);
 		setState (State::COMMAND, true, true);
@@ -1473,7 +1446,7 @@ void FtpSession::xferDir (char const *const args_, XferDirMode const mode_, bool
 
 	m_transfer = &FtpSession::listTransfer;
 
-	std::string path_to_check; // Determine the path that will be accessed
+	std::string path_to_check_str; // Determine the path that will be accessed
 
 	if (std::strlen (args_) > 0)
 	{
@@ -1503,10 +1476,10 @@ void FtpSession::xferDir (char const *const args_, XferDirMode const mode_, bool
 			setState (State::COMMAND, true, true);
 			return;
 		}
-		path_to_check = path; // Path to check for permissions
+		path_to_check_str = path; // Path to check for permissions
 
 		// Perform permission check before proceeding with stat or other operations
-		if (!checkPathPermission(path_to_check, false)) {
+		if (!checkPathPermission(path_to_check_str, false, true)) { // send_response_on_failure = true
 			setState(State::COMMAND, true, true);
 			return;
 		}
@@ -1593,10 +1566,10 @@ void FtpSession::xferDir (char const *const args_, XferDirMode const mode_, bool
 	}
 	else // No args_ provided, use m_cwd
 	{
-		path_to_check = m_cwd;
+		path_to_check_str = m_cwd;
 
 		// Perform permission check before proceeding
-		if (!checkPathPermission(path_to_check, false)) {
+		if (!checkPathPermission(path_to_check_str, false, true)) { // send_response_on_failure = true
 			setState(State::COMMAND, true, true);
 			return;
 		}
@@ -2287,7 +2260,7 @@ void FtpSession::DELE (char const *args_)
 	}
 
 	// Check permissions
-	if (!checkPathPermission(path, true)) {
+	if (!checkPathPermission(path, true, true)) { // send_response_on_failure = true
 		return; // Response already sent by checkPathPermission
 	}
 
@@ -2382,7 +2355,7 @@ void FtpSession::MKD (char const *args_)
 	}
 
 	// Check permissions
-	if (!checkPathPermission(path, true)) {
+	if (!checkPathPermission(path, true, true)) { // send_response_on_failure = true
 		return; // Response already sent by checkPathPermission
 	}
 
@@ -2450,8 +2423,8 @@ void FtpSession::NLST (char const *args_)
 	if (std::strchr (args_, '*'))
 	{
 		// Check permission for the current directory before attempting glob
-		if (!checkPathPermission(m_cwd, false)) {
-			setState (State::COMMAND, false, false); // Ensure state is reset
+		if (!checkPathPermission(m_cwd, false, true)) { // send_response_on_failure = true
+			setState (State::COMMAND, false, false); // Ensure state is reset if needed, though checkPathPermission might have set it
 			return;
 		}
 
@@ -2851,7 +2824,7 @@ void FtpSession::RMD (char const *args_)
 	}
 
 	// Check permissions
-	if (!checkPathPermission(path, true)) {
+	if (!checkPathPermission(path, true, true)) { // send_response_on_failure = true
 		return; // Response already sent by checkPathPermission
 	}
 
@@ -2885,7 +2858,7 @@ void FtpSession::RNFR (char const *args_)
 	}
 
 	// Check read permissions for the source path
-	if (!checkPathPermission(path, false)) {
+	if (!checkPathPermission(path, false, true)) { // send_response_on_failure = true
 		m_rename.clear(); // Clear rename state as we are erroring out
 		return;
 	}
@@ -2930,13 +2903,13 @@ void FtpSession::RNTO (char const *args_)
 	}
 
 	// Check permissions for source (m_rename) and destination (path)
-	// Check destination first, as it's a "creation" part
-	if (!checkPathPermission(path, true)) {
+	// Check destination first for write access
+	if (!checkPathPermission(path, true, true)) { // send_response_on_failure = true
 		m_rename.clear();
 		return;
 	}
-	// Check source for "deletion" part
-	if (!checkPathPermission(m_rename, true)) {
+	// Check source for write access (as it's being "deleted" or moved)
+	if (!checkPathPermission(m_rename, true, true)) { // send_response_on_failure = true
 		m_rename.clear();
 		return;
 	}
@@ -3111,7 +3084,7 @@ void FtpSession::SIZE (char const *args_)
 	}
 
 	// Check permissions
-	if (!checkPathPermission(path, false)) {
+	if (!checkPathPermission(path, false, true)) { // send_response_on_failure = true
 		return; // Response already sent
 	}
 
@@ -3267,85 +3240,75 @@ void FtpSession::USER (char const *args_)
 }
 
 namespace { // Anonymous namespace for helpers
-    // Tentative definitions. These might need adjustment based on actual device mount points.
-    // For example, paths could be platform-specific.
-    // On some systems, USB might be /mnt/usb, /media/usbX, or a specific device ID.
-    // For now, using a simple prefix.
-    bool isUsbPath(std::string_view path) {
-        // Assuming USB paths start with "/usb/"
-        // Ensure it's "/usb/" or "/usb/something", not just "/us"
-        if (path.length() >= 5 && path.substr(0, 5) == "/usb/") {
+
+// Wii U specific path checks
+bool isUsbPathWiiU(std::string_view path) {
+    // Check for /storage_usb/ prefix
+    if (path.length() >= 13 && path.substr(0, 13) == "/storage_usb/") {
+        return true;
+    }
+    // Check if path is exactly /storage_usb (in case it's listed at root)
+    if (path == "/storage_usb") {
+        return true;
+    }
+    return false;
+}
+
+bool isNonUsbSystemPathWiiU(std::string_view path) {
+    if (isUsbPathWiiU(path)) {
+        return false; // Explicitly not USB
+    }
+    // Check for other known system prefixes
+    const char* system_prefixes[] = {
+        "/slccmpt01/", "/storage_odd_tickets/", "/storage_odd_updates/",
+        "/storage_odd_content/", "/storage_odd_content2/", "/storage_slc/", "/storage_mlc/"
+    };
+    const char* system_roots[] = {
+        "/slccmpt01", "/storage_odd_tickets", "/storage_odd_updates",
+        "/storage_odd_content", "/storage_odd_content2", "/storage_slc", "/storage_mlc"
+    };
+
+    for (const char* prefix : system_prefixes) {
+        // Check if path starts with prefix
+        if (path.length() >= strlen(prefix) && path.compare(0, strlen(prefix), prefix) == 0) {
             return true;
         }
-        // Add other common USB prefixes if necessary
-        // else if (path.length() >= "/media/usb" && path.substr(0, 10) == "/media/usb") return true;
-        return false;
     }
-
-    // A "system path" in this context is a path that is not USB
-    // and is subject to the system_write_access control.
-    // The general system_access flag applies to both these system paths and USB paths.
-    bool isGeneralSystemPath(std::string_view path) {
-        // This function helps determine if a path falls under the general
-        // "system_access" umbrella, which includes USB if system_access is on.
-        // For the purpose of the m_enableSystemAccess flag, any non-removable/internal
-        // storage might be considered "system".
-        // If specific system mount points are known (e.g., "/system_storage/", "/internal/"),
-        // they should be checked here.
-        // For now, we'll assume any path that is *not* explicitly USB is a candidate for system access control.
-        // This means if it's not USB, the m_enableSystemAccess flag must be true for any access.
-        return !isUsbPath(path);
+     for (const char* root_path : system_roots) {
+        if (path == root_path) {
+            return true;
+        }
     }
+    return false;
+}
 
 } // end anonymous namespace
 
 bool FtpSession::checkPathPermission(std::string const &path_str, bool isWriteOperation, bool send_response_on_failure) {
     std::string_view path_sv(path_str);
-    errno = 0; // Clear errno at the beginning
+    errno = 0;
 
-    bool pathIsUsb = ::isUsbPath(path_sv);
-    // bool pathIsGeneralSystem = ::isGeneralSystemPath(path_sv); // This is equivalent to !pathIsUsb
+    // On Wii U, path visibility (existence) is already handled by the mounting logic
+    // based on sSystemFilesAllowed and sUsbAccessAllowed from platform.cpp.
+    // So, if we are here, the path is "accessible" in principle.
+    // The only check remaining from FtpConfig is for write access on non-USB system paths.
 
-    // Order of checks:
-    // 1. If it's a USB path:
-    //    - Access is allowed if EITHER m_config.enableSystemAccess() is true (system access implies USB access)
-    //      OR m_config.enableUsbAccess() is true (specific USB access).
-    //    - If neither, deny.
-    //    - If write operation to USB: currently allowed if access is granted. No separate USB write flag.
-    // 2. If it's a non-USB path (general system path):
-    //    - Access is allowed ONLY IF m_config.enableSystemAccess() is true.
-    //    - If not, deny.
-    //    - If write operation to this non-USB system path:
-    //      - Additionally requires m_config.enableSystemWriteAccess() to be true.
-    //      - If not, deny (read-only).
-
-    if (pathIsUsb) {
-        if (!m_config.enableSystemAccess() && !m_config.enableUsbAccess()) {
-            if (send_response_on_failure) sendResponse("550 USB access denied by configuration.\r\n");
-            errno = EACCES; // Or EPERM
-            return false;
-        }
-        // USB access is granted.
-        // If a separate USB write protection were needed, it would be checked here.
-        // For now, if USB access is granted, write is also granted.
-    } else { // Path is not USB (considered general system path based on current definition)
-        if (!m_config.enableSystemAccess()) {
-            if (send_response_on_failure) sendResponse("550 System file access denied by configuration.\r\n");
-            errno = EACCES;
-            return false;
-        }
-        // General system access is granted.
+    if (isNonUsbSystemPathWiiU(path_sv)) {
         if (isWriteOperation) {
             if (!m_config.enableSystemWriteAccess()) {
-                if (send_response_on_failure) sendResponse("550 System path is read-only by configuration.\r\n");
+                if (send_response_on_failure) {
+                    sendResponse("550 System path is read-only by configuration.\r\n");
+                }
                 errno = EROFS; // Read-only file system
                 return false;
             }
         }
     }
-
-    return true; // All checks passed
+    // No specific restrictions for USB writes here (if it's mounted, it's writable).
+    // No specific restrictions for non-system paths (e.g. SD card via /fs/vol/external01 unless explicitly added to isNonUsbSystemPathWiiU).
+    return true;
 }
+
 
 // clang-format off
 std::vector<std::pair<std::string_view, void (FtpSession::*) (char const *)>> const

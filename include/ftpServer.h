@@ -63,6 +63,10 @@ public:
 	/// \brief Server start time
 	static std::time_t startTime ();
 
+	/// \brief Set system write access for the current configuration
+	/// \param enable_ True to enable, false to disable
+	void setSystemWriteEnable(bool enable_);
+
 #ifdef __3DS__
 	/// \brief Get timezone offset in seconds (only used on 3DS)
 	static int tzOffset ();

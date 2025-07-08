@@ -442,6 +442,13 @@ int FtpServer::tzOffset ()
 }
 #endif
 
+void FtpServer::setSystemWriteEnable(bool enable_)
+{
+	if (m_config) {
+		m_config->setEnableSystemWriteAccess(enable_);
+	}
+}
+
 void FtpServer::handleNetworkFound ()
 {
 	SockAddr addr;

@@ -56,9 +56,13 @@ WUPS_USE_STORAGE ("ftpiiu"); // Unique id for the storage api
 
 #define DEFAULT_FTPIIU_ENABLED_VALUE true
 #define DEFAULT_SYSTEM_FILES_ALLOWED_VALUE false
+#define DEFAULT_USB_ACCESS_ALLOWED_VALUE false
+#define DEFAULT_SYSTEM_WRITE_ALLOWED_VALUE false
 
 #define FTPIIU_ENABLED_STRING "enabled"
 #define SYSTEM_FILES_ALLOWED_STRING "systemFilesAllowed"
+#define USB_ACCESS_ALLOWED_STRING "usbAccessAllowed"
+#define SYSTEM_WRITE_ALLOWED_STRING "systemWriteAllowed"
 
 bool platform::networkVisible ()
 {
@@ -96,7 +100,9 @@ MochaUtilsStatus MountWrapper (const char *mount, const char *dev, const char *m
 
 UniqueFtpServer server             = nullptr;
 static bool sSystemFilesAllowed    = DEFAULT_SYSTEM_FILES_ALLOWED_VALUE;
-static bool sMochaPathsWereMounted = false;
+static bool sUsbAccessAllowed      = DEFAULT_USB_ACCESS_ALLOWED_VALUE;
+static bool sSystemWriteAllowedWUPS  = DEFAULT_SYSTEM_WRITE_ALLOWED_VALUE; // WUPS controlled value
+static bool sMochaPathsWereMounted = false; // This might need more nuanced handling for USB vs System
 static bool sFTPServerEnabled      = DEFAULT_FTPIIU_ENABLED_VALUE;
 
 void start_server ()
@@ -110,59 +116,61 @@ void start_server ()
 	if ((res = Mocha_InitLibrary ()) == MOCHA_RESULT_SUCCESS)
 	{
 		std::vector<std::string> virtualDirsInRoot;
+		sMochaPathsWereMounted = false; // Reset before attempting mounts
+
 		if (sSystemFilesAllowed)
 		{
-			if (MountWrapper ("slccmpt01", "/dev/slccmpt01", "/vol/storage_slccmpt01") ==
-			    MOCHA_RESULT_SUCCESS)
-			{
+			if (MountWrapper ("slccmpt01", "/dev/slccmpt01", "/vol/storage_slccmpt01") == MOCHA_RESULT_SUCCESS) {
 				virtualDirsInRoot.emplace_back ("slccmpt01");
 				IOAbstraction::addVirtualPath ("slccmpt01:/", {});
+				sMochaPathsWereMounted = true;
 			}
-			if (MountWrapper ("storage_odd_tickets", nullptr, "/vol/storage_odd01") ==
-			    MOCHA_RESULT_SUCCESS)
-			{
+			if (MountWrapper ("storage_odd_tickets", nullptr, "/vol/storage_odd01") == MOCHA_RESULT_SUCCESS) {
 				virtualDirsInRoot.emplace_back ("storage_odd_tickets");
 				IOAbstraction::addVirtualPath ("storage_odd_tickets:/", {});
+				sMochaPathsWereMounted = true;
 			}
-			if (MountWrapper ("storage_odd_updates", nullptr, "/vol/storage_odd02") ==
-			    MOCHA_RESULT_SUCCESS)
-			{
+			if (MountWrapper ("storage_odd_updates", nullptr, "/vol/storage_odd02") == MOCHA_RESULT_SUCCESS) {
 				virtualDirsInRoot.emplace_back ("storage_odd_updates");
 				IOAbstraction::addVirtualPath ("storage_odd_updates:/", {});
+				sMochaPathsWereMounted = true;
 			}
-			if (MountWrapper ("storage_odd_content", nullptr, "/vol/storage_odd03") ==
-			    MOCHA_RESULT_SUCCESS)
-			{
+			if (MountWrapper ("storage_odd_content", nullptr, "/vol/storage_odd03") == MOCHA_RESULT_SUCCESS) {
 				virtualDirsInRoot.emplace_back ("storage_odd_content");
 				IOAbstraction::addVirtualPath ("storage_odd_content:/", {});
+				sMochaPathsWereMounted = true;
 			}
-			if (MountWrapper ("storage_odd_content2", nullptr, "/vol/storage_odd04") ==
-			    MOCHA_RESULT_SUCCESS)
-			{
+			if (MountWrapper ("storage_odd_content2", nullptr, "/vol/storage_odd04") == MOCHA_RESULT_SUCCESS) {
 				virtualDirsInRoot.emplace_back ("storage_odd_content2");
 				IOAbstraction::addVirtualPath ("storage_odd_content2:/", {});
+				sMochaPathsWereMounted = true;
 			}
-			if (MountWrapper ("storage_slc", "/dev/slc01", "/vol/storage_slc01") ==
-			    MOCHA_RESULT_SUCCESS)
-			{
+			if (MountWrapper ("storage_slc", "/dev/slc01", "/vol/storage_slc01") == MOCHA_RESULT_SUCCESS) {
 				virtualDirsInRoot.emplace_back ("storage_slc");
 				IOAbstraction::addVirtualPath ("storage_slc:/", {});
+				sMochaPathsWereMounted = true;
 			}
-			if (Mocha_MountFS ("storage_mlc", nullptr, "/vol/storage_mlc01") ==
-			    MOCHA_RESULT_SUCCESS)
-			{
+			if (Mocha_MountFS ("storage_mlc", nullptr, "/vol/storage_mlc01") == MOCHA_RESULT_SUCCESS) {
 				virtualDirsInRoot.emplace_back ("storage_mlc");
 				IOAbstraction::addVirtualPath ("storage_mlc:/", {});
+				sMochaPathsWereMounted = true;
 			}
-			if (Mocha_MountFS ("storage_usb", nullptr, "/vol/storage_usb01") ==
-			    MOCHA_RESULT_SUCCESS)
-			{
+			// USB is also mounted if sSystemFilesAllowed is true
+			if (Mocha_MountFS ("storage_usb", nullptr, "/vol/storage_usb01") == MOCHA_RESULT_SUCCESS) {
 				virtualDirsInRoot.emplace_back ("storage_usb");
 				IOAbstraction::addVirtualPath ("storage_usb:/", {});
+				sMochaPathsWereMounted = true; // sMochaPathsWereMounted indicates *any* mocha path
 			}
-
-			sMochaPathsWereMounted = true;
 		}
+		else if (sUsbAccessAllowed) // System files not allowed, but check for standalone USB access
+		{
+			if (Mocha_MountFS ("storage_usb", nullptr, "/vol/storage_usb01") == MOCHA_RESULT_SUCCESS) {
+				virtualDirsInRoot.emplace_back ("storage_usb");
+				IOAbstraction::addVirtualPath ("storage_usb:/", {});
+				sMochaPathsWereMounted = true;
+			}
+		}
+
 		virtualDirsInRoot.emplace_back ("fs");
 		IOAbstraction::addVirtualPath (":/", virtualDirsInRoot);
 		IOAbstraction::addVirtualPath ("fs:/", std::vector<std::string>{"vol"});
@@ -194,6 +202,9 @@ void start_server ()
 	}
 
 	server = FtpServer::create ();
+	if (server) { // Ensure server was created successfully
+		server->setSystemWriteEnable(sSystemWriteAllowedWUPS);
+	}
 }
 
 void stop_server ()
@@ -259,6 +270,51 @@ static void gSystemFilesAllowedChanged (ConfigItemBoolean *item, bool newValue)
 	}
 }
 
+static void gUsbAccessAllowedChanged (ConfigItemBoolean *item, bool newValue)
+{
+	if (server != nullptr && sUsbAccessAllowed != newValue)
+	{ // If the server is already running and value changed, we need to restart it.
+		stop_server ();
+		sUsbAccessAllowed = newValue;
+		start_server ();
+	}
+	else
+	{
+		sUsbAccessAllowed = newValue;
+	}
+	// If the value has changed, we store it in the storage.
+	auto res = WUPSStorageAPI::Store (USB_ACCESS_ALLOWED_STRING, sUsbAccessAllowed);
+	if (res != WUPS_STORAGE_ERROR_SUCCESS)
+	{
+		DEBUG_FUNCTION_LINE_ERR ("Failed to store gUsbAccessAllowed: %s (%d)\n",
+		    WUPSStorageAPI::GetStatusStr (res).data (),
+		    WUPSStorageAPI::GetStatusStr (res).data (),
+		    res);
+	}
+}
+
+static void gSystemWriteAllowedChanged (ConfigItemBoolean *item, bool newValue)
+{
+	sSystemWriteAllowedWUPS = newValue; // Update the WUPS static variable
+
+	if (server != nullptr)
+	{
+		// Update the live FtpServer's config immediately
+		server->setSystemWriteEnable(newValue);
+	}
+
+	// Store the WUPS setting
+	auto res = WUPSStorageAPI::Store (SYSTEM_WRITE_ALLOWED_STRING, sSystemWriteAllowedWUPS);
+	if (res != WUPS_STORAGE_ERROR_SUCCESS)
+	{
+		DEBUG_FUNCTION_LINE_ERR ("Failed to store gSystemWriteAllowed: %s (%d)\n",
+		    WUPSStorageAPI::GetStatusStr (res).data (),
+		    res);
+	}
+	// Note: A server restart is likely NOT needed for this specific setting,
+	// as FtpSession checks it on-the-fly.
+}
+
 WUPSConfigAPICallbackStatus ConfigMenuOpenedCallback (WUPSConfigCategoryHandle rootHandle)
 {
 	uint32_t hostIpAddress = 0;
@@ -277,6 +333,18 @@ WUPSConfigAPICallbackStatus ConfigMenuOpenedCallback (WUPSConfigCategoryHandle r
 		    false,
 		    sSystemFilesAllowed,
 		    &gSystemFilesAllowedChanged));
+
+		root.add (WUPSConfigItemBoolean::Create (USB_ACCESS_ALLOWED_STRING,
+			"Allow USB access (even if system access is off)", // Description
+			false, // Default value for UI if not loaded, actual default is DEFAULT_USB_ACCESS_ALLOWED_VALUE
+			sUsbAccessAllowed,
+			&gUsbAccessAllowedChanged));
+
+		root.add (WUPSConfigItemBoolean::Create (SYSTEM_WRITE_ALLOWED_STRING,
+			"Enable write to system files (if system access is on)", // Description
+			false, // Default value for UI
+			sSystemWriteAllowedWUPS,
+			&gSystemWriteAllowedChanged));
 
 		root.add (WUPSConfigItemStub::Create ("==="));
 
@@ -341,6 +409,24 @@ INITIALIZE_PLUGIN ()
 	{
 		DEBUG_FUNCTION_LINE_ERR ("Failed to get or create item \"%s\": %s (%d)\n",
 		    SYSTEM_FILES_ALLOWED_STRING,
+		    WUPSStorageAPI_GetStatusStr (err),
+		    err);
+	}
+	if ((err = WUPSStorageAPI::GetOrStoreDefault (USB_ACCESS_ALLOWED_STRING,
+	         sUsbAccessAllowed,
+	         DEFAULT_USB_ACCESS_ALLOWED_VALUE)) != WUPS_STORAGE_ERROR_SUCCESS)
+	{
+		DEBUG_FUNCTION_LINE_ERR ("Failed to get or create item \"%s\": %s (%d)\n",
+		    USB_ACCESS_ALLOWED_STRING,
+		    WUPSStorageAPI_GetStatusStr (err),
+		    err);
+	}
+	if ((err = WUPSStorageAPI::GetOrStoreDefault (SYSTEM_WRITE_ALLOWED_STRING,
+	         sSystemWriteAllowedWUPS,
+	         DEFAULT_SYSTEM_WRITE_ALLOWED_VALUE)) != WUPS_STORAGE_ERROR_SUCCESS)
+	{
+		DEBUG_FUNCTION_LINE_ERR ("Failed to get or create item \"%s\": %s (%d)\n",
+		    SYSTEM_WRITE_ALLOWED_STRING,
 		    WUPSStorageAPI_GetStatusStr (err),
 		    err);
 	}

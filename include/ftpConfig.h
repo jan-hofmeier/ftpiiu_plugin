@@ -83,14 +83,8 @@ public:
 	std::string const &passphrase () const;
 #endif
 
-	/// \brief Whether to enable system access
-	bool enableSystemAccess () const;
-
 	/// \brief Whether to enable system write access
 	bool enableSystemWriteAccess () const;
-
-	/// \brief Whether to enable USB access
-	bool enableUsbAccess () const;
 
 	/// \brief Set user
 	/// \param user_ User
@@ -132,17 +126,9 @@ public:
 	void setPassphrase (std::string_view passphrase_);
 #endif
 
-	/// \brief Set whether to enable system access
-	/// \param enable_ Whether to enable system access
-	void setEnableSystemAccess (bool enable_);
-
 	/// \brief Set whether to enable system write access
 	/// \param enable_ Whether to enable system write access
 	void setEnableSystemWriteAccess (bool enable_);
-
-	/// \brief Set whether to enable USB access
-	/// \param enable_ Whether to enable USB access
-	void setEnableUsbAccess (bool enable_);
 
 private:
 	FtpConfig ();
@@ -180,12 +166,6 @@ private:
 	std::string m_passphrase;
 #endif
 
-	/// \brief Whether to enable system access
-	bool m_enableSystemAccess = true; // Default to enabled for now, adjust in constructor if needed
-
 	/// \brief Whether to enable system write access
 	bool m_enableSystemWriteAccess = false; // Default to read-only
-
-	/// \brief Whether to enable USB access
-	bool m_enableUsbAccess = false; // Default to disabled
 };
