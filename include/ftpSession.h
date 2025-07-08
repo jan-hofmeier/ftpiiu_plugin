@@ -72,6 +72,13 @@ public:
 	static bool poll (std::vector<UniqueFtpSession> const &sessions_);
 
 private:
+	/// \brief Check if the operation is permitted on the given path
+	/// \param path_ Path to check
+	/// \param isWriteOperation_ True if the operation is a write operation
+	/// \param send_response_on_failure_ Whether to send a 550 response on failure (defaults to true)
+	/// \return True if permitted, false otherwise
+	bool checkPathPermission (std::string const &path_, bool isWriteOperation, bool send_response_on_failure = true);
+
 	/// \brief Command buffer size
 	constexpr static auto COMMAND_BUFFERSIZE = 4096;
 

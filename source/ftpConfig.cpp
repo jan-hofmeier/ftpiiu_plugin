@@ -182,6 +182,36 @@ UniqueFtpConfig FtpConfig::load (gsl::not_null<gsl::czstring> const path_)
 		else if (key == "passphrase")
 			config->m_passphrase = val;
 #endif
+		else if (key == "system_access")
+		{
+			if (val == "0")
+				config->m_enableSystemAccess = false;
+			else if (val == "1")
+				config->m_enableSystemAccess = true;
+			else
+				error ("Invalid value for system_access: %.*s\n",
+				       gsl::narrow_cast<int> (val.size ()), val.data ());
+		}
+		else if (key == "system_write_access")
+		{
+			if (val == "0")
+				config->m_enableSystemWriteAccess = false;
+			else if (val == "1")
+				config->m_enableSystemWriteAccess = true;
+			else
+				error ("Invalid value for system_write_access: %.*s\n",
+				       gsl::narrow_cast<int> (val.size ()), val.data ());
+		}
+		else if (key == "usb_access")
+		{
+			if (val == "0")
+				config->m_enableUsbAccess = false;
+			else if (val == "1")
+				config->m_enableUsbAccess = true;
+			else
+				error ("Invalid value for usb_access: %.*s\n",
+				       gsl::narrow_cast<int> (val.size ()), val.data ());
+		}
 	}
 
 	config->setPort (port);
@@ -222,6 +252,10 @@ bool FtpConfig::save (gsl::not_null<gsl::czstring> const path_)
 	if (!m_passphrase.empty ())
 		(void)std::fprintf (fp, "passphrase=%s\n", m_passphrase.c_str ());
 #endif
+
+	(void)std::fprintf (fp, "system_access=%u\n", m_enableSystemAccess);
+	(void)std::fprintf (fp, "system_write_access=%u\n", m_enableSystemWriteAccess);
+	(void)std::fprintf (fp, "usb_access=%u\n", m_enableUsbAccess);
 
 	return true;
 }
@@ -340,3 +374,33 @@ void FtpConfig::setPassphrase (std::string_view const passphrase_)
 	m_passphrase = passphrase_.substr (0, passphrase_.find_first_of ('\0'));
 }
 #endif
+
+bool FtpConfig::enableSystemAccess () const
+{
+	return m_enableSystemAccess;
+}
+
+bool FtpConfig::enableSystemWriteAccess () const
+{
+	return m_enableSystemWriteAccess;
+}
+
+bool FtpConfig::enableUsbAccess () const
+{
+	return m_enableUsbAccess;
+}
+
+void FtpConfig::setEnableSystemAccess (bool const enable_)
+{
+	m_enableSystemAccess = enable_;
+}
+
+void FtpConfig::setEnableSystemWriteAccess (bool const enable_)
+{
+	m_enableSystemWriteAccess = enable_;
+}
+
+void FtpConfig::setEnableUsbAccess (bool const enable_)
+{
+	m_enableUsbAccess = enable_;
+}
